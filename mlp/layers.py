@@ -15,6 +15,7 @@ respect to the layer parameters.
 import numpy as np
 import mlp.initialisers as init
 from mlp import DEFAULT_SEED
+from mlp.schedulers import get_im2col_indices, im2col_indices, col2im_indices
 
 
 class Layer(object):
@@ -438,8 +439,10 @@ class ConvolutionalLayer(LayerWithParameters):
         self.biases_penalty = biases_penalty
 
         self.cache = None
+        
 
-    def fprop(self, inputs):
+
+    def fprop(self, inputs, stride=1, padding=0):
         """Forward propagates activations through the layer transformation.
         For inputs `x`, outputs `y`, kernels `K` and biases `b` the layer
         corresponds to `y = conv2d(x, K) + b`.
@@ -448,7 +451,40 @@ class ConvolutionalLayer(LayerWithParameters):
         Returns:
             outputs: Array of layer outputs of shape (batch_size, num_output_channels, output_height, output_width).
         """
-        raise NotImplementedError
+#         cache = W, b, stride, padding
+
+
+        
+        n_filters, d_filter, h_filter, w_filter = self.kernels_shape
+        n_x, d_x, h_x, w_x = inputs.shape
+        h_out = (h_x - h_filter + 2 * padding) / stride + 1
+        w_out = (w_x - w_filter + 2 * padding) / stride + 1
+
+
+
+        h_out, w_out = int(h_out), int(w_out)
+    
+        X_col = im2col_indices(inputs, h_filter, w_filter,padding=padding, stride=stride)
+        
+        ######filp the kernel first!!!########
+        self.kernels=np.flip(self.kernels,(2,3))
+        
+        W_col = self.kernels.reshape(n_filters, -1)
+
+
+        biases=np.array(self.biases,ndmin=2)
+
+        out = np.dot(W_col, X_col) + biases.T
+        
+        out = out.reshape(n_filters, h_out, w_out, n_x)
+        out = out.transpose(3, 0, 1, 2)
+        
+        self.cache= X_col
+#         cache = (X, W, b, stride, padding, X_col)
+#         print(self.cache)
+
+        return out
+        
 
     def bprop(self, inputs, outputs, grads_wrt_outputs):
         """Back propagates gradients through a layer.
@@ -467,7 +503,25 @@ class ConvolutionalLayer(LayerWithParameters):
             Array of gradients with respect to the layer inputs of shape
             (batch_size, num_input_channels, input_height, input_width).
         """
-        raise NotImplementedError
+#         X, W, b, stride, padding, X_col = cache
+        n_filter, d_filter, h_filter, w_filter = self.kernels_shape
+
+#         db = np.sum(grads_wrt_outputs, axis=(0, 2, 3))
+#         db = db.reshape(n_filter, -1)
+
+        dout_reshaped = grads_wrt_outputs.transpose(1, 2, 3, 0).reshape(n_filter, -1)
+#         dW = dout_reshaped @ X_col.T
+#         dW = dW.reshape(W.shape)
+
+         ######filp the kernel first!!!########
+        self.kernels=np.flip(self.kernels,(2,3))
+        
+        W_reshape = self.kernels.reshape(n_filter, -1)
+        dX_col = W_reshape.T @ dout_reshaped
+        dX = col2im_indices(dX_col, inputs.shape, h_filter, w_filter, padding=0, stride=1)
+
+        return dX
+            
 
     def grads_wrt_params(self, inputs, grads_wrt_outputs):
         """Calculates gradients with respect to layer parameters.
@@ -480,7 +534,29 @@ class ConvolutionalLayer(LayerWithParameters):
             list of arrays of gradients with respect to the layer parameters
             `[grads_wrt_kernels, grads_wrt_biases]`.
         """
-        raise NotImplementedError
+#         X_col=self.cache
+#         print(X_col)
+        
+    
+        n_filter, d_filter, h_filter, w_filter = self.kernels_shape
+        
+        X_col = im2col_indices(inputs, h_filter, w_filter,padding=0, stride=1)
+        
+        db = np.sum(grads_wrt_outputs, axis=(0, 2, 3))
+        db = db.reshape(n_filter, -1)
+        db=np.squeeze(db)
+        
+       
+        dout_reshaped = grads_wrt_outputs.transpose(1, 2, 3, 0).reshape(n_filter, -1)
+        
+        dW = dout_reshaped @ X_col.T
+        dW = dW.reshape(self.kernels.shape)
+        
+        ##########flip the gradients wrt kernel as well!!!!########
+        dW=np.flip(dW,(2,3))
+        
+        return [dW,db]
+      
 
     def params_penalty(self):
         """Returns the parameter dependent penalty term for this layer.
@@ -541,7 +617,26 @@ class MaxPooling2DLayer(Layer):
         :return: The output of the max pooling operation. Assuming a stride=2 the output should have a shape of
         (b, c, (input_height - size)/stride + 1, (input_width - size)/stride + 1)
         """
-        raise NotImplementedError
+        n, d, h, w = inputs.shape
+        h_out = (h - self.size) / self.stride + 1
+        w_out = (w - self.size) / self.stride + 1
+
+
+        h_out, w_out = int(h_out), int(w_out)
+
+        X_reshaped = inputs.reshape(n * d, 1, h, w)
+        X_col = im2col_indices(X_reshaped, field_height=self.size, field_width=self.size, padding=0, stride=2)
+
+#         out, pool_cache = pool_fun(X_col)
+        max_idx = np.argmax(X_col, axis=0)
+        out = X_col[max_idx, range(max_idx.size)]
+        
+
+        out = out.reshape(h_out, w_out, n, d)
+        out = out.transpose(2, 3, 0, 1)
+        
+        return out
+
 
     def bprop(self, inputs, outputs, grads_wrt_outputs):
         """
@@ -552,8 +647,27 @@ class MaxPooling2DLayer(Layer):
         :param grads_wrt_outputs: The grads wrt to the outputs, of shape equal to that of the outputs.
         :return: grads_wrt_input, of shape equal to the inputs.
         """
-        raise NotImplementedError
+#         X, size, stride, X_col, pool_cache = cache
+        n, d, h, w = inputs.shape
+        X_reshaped = inputs.reshape(n * d, 1, h, w)
+        
+        X_col = im2col_indices(X_reshaped, field_height=self.size, field_width=self.size, padding=0, stride=2)
+        max_idx = np.argmax(X_col, axis=0)
+             
 
+        dX_col = np.zeros_like(X_col)
+        dout_col = grads_wrt_outputs.transpose(2, 3, 0, 1).ravel()
+        
+        dX_col[ max_idx , range(dout_col.size)] = dout_col
+
+#         dX = dpool_fun(dX_col, dout_col, pool_cache)
+            
+
+        dX = col2im_indices(dX_col, (n * d, 1, h, w), self.size, self.size, padding=0, stride=2)
+        dX = dX.reshape(inputs.shape)  
+
+        return dX
+       
 
 class ReluLayer(Layer):
     """Layer implementing an element-wise rectified linear transformation."""
