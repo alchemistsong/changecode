@@ -455,7 +455,10 @@ class ConvolutionalLayer(LayerWithParameters):
 
 
         
+#         n_filters, d_filter, h_filter, w_filter = self.kernels_shape
+        
         n_filters, d_filter, h_filter, w_filter = self.kernels_shape
+        
         n_x, d_x, h_x, w_x = inputs.shape
         h_out = (h_x - h_filter + 2 * padding) / stride + 1
         w_out = (w_x - w_filter + 2 * padding) / stride + 1
