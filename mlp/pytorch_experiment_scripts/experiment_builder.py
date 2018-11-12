@@ -153,6 +153,8 @@ class ExperimentBuilder(nn.Module):
         """
         total_losses = {"train_acc": [], "train_loss": [], "val_acc": [],
                         "val_loss": []}  # initialize a dict to keep the per-epoch metrics
+        
+        #############Maybe start timing here#############
         for i, epoch_idx in enumerate(range(self.starting_epoch, self.num_epochs)):
             epoch_start_time = time.time()
             current_epoch_losses = {"train_acc": [], "train_loss": [], "val_acc": [], "val_loss": []}
@@ -197,7 +199,7 @@ class ExperimentBuilder(nn.Module):
                             model_save_name="train_model", model_idx=epoch_idx,
                             best_validation_model_idx=self.best_val_model_idx,
                             best_validation_model_acc=self.best_val_model_acc)
-
+        #############Maybe finish timing here#############
         print("Generating test set evaluation metrics")
         self.load_model(model_save_dir=self.experiment_saved_models, model_idx=self.best_val_model_idx,
                         # load best validation model
